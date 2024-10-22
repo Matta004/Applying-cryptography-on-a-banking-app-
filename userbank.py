@@ -7,22 +7,71 @@ import string
 from PIL import Image, ImageTk
 
 class Account:
-    def __init__(self, account_id, name, initial_balance=0):
+    def __init__(self, account_id, name, dob, address, phone, email, gov_id, password, balance=0, initial_balance=0):
         self.account_id = account_id
         self.name = name
-        self.balance = initial_balance
+        self.dob = dob
+        self.address = address
+        self.phone = phone
+        self.email = email
+        self.gov_id = gov_id
+        self.password = password
+        self.balance = balance
+        self.initial_balance = initial_balance
+        self.transaction_history = []
+        self.loans = []
 
     def deposit(self, amount):
         if amount > 0:
             self.balance += amount
+            self.transaction_history.append(f"Deposited ${amount}")
         else:
             raise ValueError("Deposit amount must be greater than 0.")
 
     def withdraw(self, amount):
         if 0 < amount <= self.balance:
             self.balance -= amount
+            self.transaction_history.append(f"Withdrew ${amount}")
         else:
             raise ValueError("Insufficient funds or invalid amount.")
+
+    def transfer(self, receiver, amount):
+        if 0 < amount <= self.balance:
+            self.withdraw(amount)
+            receiver.deposit(amount)
+            self.transaction_history.append(f"Transferred ${amount} to account {receiver.account_id}")
+            receiver.transaction_history.append(f"Received ${amount} from account {self.account_id}")
+        else:
+            raise ValueError("Insufficient funds or invalid amount.")
+
+    def change_password(self):
+        new_password = ''.join(random.choices(string.ascii_letters + string.digits, k=18))
+        self.password = new_password
+        return new_password
+
+    def apply_for_loan(self, amount, interest_rate, term_months):
+        if amount > 0:
+            loan_details = {
+                "amount": amount,
+                "interest_rate": interest_rate,
+                "term_months": term_months,
+                "monthly_payment": (amount * (1 + interest_rate / 100)) / term_months
+            }
+            self.loans.append(loan_details)
+            self.transaction_history.append(f"Applied for loan of ${amount} at {interest_rate}% interest for {term_months} months")
+        else:
+            raise ValueError("Loan amount must be greater than 0.")
+
+    def calculate_interest(self, rate):
+        interest = self.balance * (rate / 100)
+        self.balance += interest
+        self.transaction_history.append(f"Interest of ${interest} added at rate {rate}%")
+
+    def generate_one_time_card(self):
+        card_number = ''.join(random.choices(string.digits, k=16))
+        expiry_date = f"{random.randint(1, 12)}/{random.randint(24, 29)}"
+        cvv = ''.join(random.choices(string.digits, k=3))
+        return card_number, expiry_date, cvv
 
     def check_balance(self):
         return self.balance
@@ -35,52 +84,63 @@ class Bank:
         self.requests_file = requests_file
         self.load_accounts()
 
-    def create_account_request(self, name, dob, address, phone, email, id_number):
-        account_id = self.generate_account_id()
-        password = self.generate_random_password()
-        with open(self.requests_file, 'a', newline='') as file:
-            writer = csv.writer(file)
-            writer.writerow([account_id, name, dob, address, phone, email, id_number, password])
-        messagebox.showinfo("Request Submitted", f"Your account request has been submitted successfully!\nAccount ID: {account_id}\nPassword: {password}")
-
-    def create_account(self, account_id, name, initial_balance=0):
-        if account_id not in self.accounts:
-            self.accounts[account_id] = Account(account_id, name, initial_balance)
-            self.save_account_to_file(account_id, name, initial_balance)
-        else:
-            raise ValueError("Account ID already exists. Please choose a different ID.")
-
-    def remove_account(self, account_id):
-        if account_id in self.accounts:
-            del self.accounts[account_id]
-            self.save_all_accounts_to_file()
-        else:
-            raise ValueError("Account ID does not exist.")
-
-    def save_account_to_file(self, account_id, name, balance):
-        with open(self.accounts_file, 'a', newline='') as file:
-            writer = csv.writer(file)
-            writer.writerow([account_id, name, balance])
-
-    def save_all_accounts_to_file(self):
-        with open(self.accounts_file, 'w', newline='') as file:
-            writer = csv.writer(file)
-            for account in self.accounts.values():
-                writer.writerow([account.account_id, account.name, account.balance])
-
-    def save_transaction_to_file(self, sender_id, receiver_id, amount):
-        with open(self.transactions_file, 'a', newline='') as file:
-            writer = csv.writer(file)
-            writer.writerow([sender_id, receiver_id, amount])
-
     def load_accounts(self):
         if os.path.exists(self.accounts_file):
             with open(self.accounts_file, 'r') as file:
                 reader = csv.reader(file)
+                next(reader, None)  # Skip header
                 for row in reader:
-                    account_id, name, balance = row
-                    self.accounts[account_id] = Account(account_id, name, float(balance))
+                    account_id, name, dob, address, phone, email, gov_id, password, balance, initial_balance = row
+                    self.accounts[account_id] = Account(
+                        account_id=account_id,
+                        name=name,
+                        dob=dob,
+                        address=address,
+                        phone=phone,
+                        email=email,
+                        gov_id=gov_id,
+                        password=password,
+                        balance=float(balance),
+                        initial_balance=float(initial_balance)
+                    )
 
+    def create_account_request(self, name, dob, address, phone, email, id_number):
+        account_id = self.generate_account_id()
+        password = self.generate_random_password()
+        file_exists = os.path.isfile(self.requests_file)
+        with open(self.requests_file, 'a', newline='') as file:
+            writer = csv.writer(file)
+            if not file_exists:
+                writer.writerow(['Account ID', 'Name', 'DOB', 'Address', 'Phone', 'Email', 'Gov ID', 'Password'])
+            writer.writerow([account_id, name, dob, address, phone, email, id_number, password])
+        messagebox.showinfo("Request Submitted", f"Your account request has been submitted successfully!\nAccount ID: {account_id}\nPassword: {password}")
+
+    def create_account(self, account_id, name, dob, address, phone, email, id_number, password, initial_balance=0):
+        if account_id not in self.accounts:
+            self.accounts[account_id] = Account(account_id, name, dob, address, phone, email, id_number, password, initial_balance)
+            self.save_account_to_file(account_id, name, dob, address, phone, email, id_number, password, initial_balance)
+        else:
+            raise ValueError("Account ID already exists. Please choose a different ID.")
+
+    def save_account_to_file(self, account_id, name, dob, address, phone, email, gov_id, password, balance):
+        file_exists = os.path.isfile(self.accounts_file)
+        with open(self.accounts_file, 'a', newline='') as file:
+            writer = csv.writer(file)
+            if not file_exists:
+                writer.writerow(['Account ID', 'Name', 'DOB', 'Address', 'Phone', 'Email', 'Gov ID', 'Password', 'Balance', 'Initial Balance'])
+            writer.writerow([account_id, name, dob, address, phone, email, gov_id, password, balance, balance])
+
+    def get_account(self, account_id):
+        return self.accounts.get(account_id)
+
+    def login(self, account_id, password):
+        account = self.get_account(account_id)
+        if account and account.password == password:
+            return account
+        else:
+            return None
+
+    # Utility functions
     def generate_account_id(self):
         return ''.join(random.choices(string.digits, k=10))
 
@@ -137,12 +197,13 @@ class BankApp:
 
     def login(self):
         account_id = self.account_id_entry.get()
-        account = self.bank.get_account(account_id)
+        password = self.password_entry.get()
+        account = self.bank.login(account_id, password)
         if account:
             self.current_account = account
             self.show_main_menu()
         else:
-            messagebox.showerror("Error", "Invalid Account ID")
+            messagebox.showerror("Error", "Invalid Account ID or Password")
 
     def show_request_account_screen(self):
         self.clear_screen()
@@ -205,6 +266,9 @@ class BankApp:
         tk.Button(main_menu_frame, text="Deposit", command=self.show_deposit_screen, font=("Arial", 12), width=20, bg="#4caf50", fg="#ffffff").pack(pady=5)
         tk.Button(main_menu_frame, text="Withdraw", command=self.show_withdraw_screen, font=("Arial", 12), width=20, bg="#ff9800", fg="#ffffff").pack(pady=5)
         tk.Button(main_menu_frame, text="Transfer Money", command=self.show_transfer_screen, font=("Arial", 12), width=20, bg="#9c27b0", fg="#ffffff").pack(pady=5)
+        tk.Button(main_menu_frame, text="Apply for Loan", command=self.show_loan_screen, font=("Arial", 12), width=20, bg="#ff5722", fg="#ffffff").pack(pady=5)
+        tk.Button(main_menu_frame, text="Change Password", command=self.change_password, font=("Arial", 12), width=20, bg="#f44336", fg="#ffffff").pack(pady=5)
+        tk.Button(main_menu_frame, text="Generate One-Time Card", command=self.generate_one_time_card, font=("Arial", 12), width=20, bg="#795548", fg="#ffffff").pack(pady=5)
         tk.Button(main_menu_frame, text="Logout", command=self.logout, font=("Arial", 12), width=20, bg="#f44336", fg="#ffffff").pack(pady=5)
 
     def check_balance(self):
@@ -227,8 +291,14 @@ class BankApp:
     def deposit(self):
         try:
             amount = float(self.deposit_amount_entry.get())
+            if amount <= 0:
+                raise ValueError("Deposit amount must be greater than zero.")
             self.current_account.deposit(amount)
-            self.bank.save_account_to_file(self.current_account.account_id, self.current_account.name, self.current_account.balance)
+            self.bank.save_account_to_file(
+                self.current_account.account_id, self.current_account.name, self.current_account.dob, 
+                self.current_account.address, self.current_account.phone, self.current_account.email, 
+                self.current_account.gov_id, self.current_account.password, self.current_account.balance
+            )
             messagebox.showinfo("Success", f"Deposited ${amount} successfully.")
             self.show_main_menu()
         except ValueError as e:
@@ -251,7 +321,11 @@ class BankApp:
         try:
             amount = float(self.withdraw_amount_entry.get())
             self.current_account.withdraw(amount)
-            self.bank.save_account_to_file(self.current_account.account_id, self.current_account.name, self.current_account.balance)
+            self.bank.save_account_to_file(
+                self.current_account.account_id, self.current_account.name, self.current_account.dob, 
+                self.current_account.address, self.current_account.phone, self.current_account.email, 
+                self.current_account.gov_id, self.current_account.password, self.current_account.balance
+            )
             messagebox.showinfo("Success", f"Withdrew ${amount} successfully.")
             self.show_main_menu()
         except ValueError as e:
@@ -278,12 +352,77 @@ class BankApp:
         try:
             receiver_id = self.receiver_id_entry.get()
             amount = float(self.transfer_amount_entry.get())
-            self.bank.transfer_money(self.current_account.account_id, receiver_id, amount)
-            self.bank.save_account_to_file(self.current_account.account_id, self.current_account.name, self.current_account.balance)
-            messagebox.showinfo("Success", f"Transferred ${amount} to account {receiver_id}.")
+            receiver_account = self.bank.get_account(receiver_id)
+            if not receiver_account:
+                raise ValueError("Receiver account not found.")
+            self.current_account.transfer(receiver_account, amount)
+            self.bank.save_account_to_file(
+                self.current_account.account_id, self.current_account.name, self.current_account.dob, 
+                self.current_account.address, self.current_account.phone, self.current_account.email, 
+                self.current_account.gov_id, self.current_account.password, self.current_account.balance
+            )
+            self.bank.save_account_to_file(
+                receiver_account.account_id, receiver_account.name, receiver_account.dob, 
+                receiver_account.address, receiver_account.phone, receiver_account.email, 
+                receiver_account.gov_id, receiver_account.password, receiver_account.balance
+            )
+            messagebox.showinfo("Success", f"Transferred ${amount} to account {receiver_id} successfully.")
             self.show_main_menu()
         except ValueError as e:
             messagebox.showerror("Error", str(e))
+
+    def show_loan_screen(self):
+        self.clear_screen()
+
+        loan_frame = tk.Frame(self.root, bg="#ffffff", padx=20, pady=20, relief="groove", bd=3)
+        loan_frame.place(relx=0.5, rely=0.3, anchor="n")
+
+        tk.Label(loan_frame, text="Loan Amount:", font=("Arial", 12), bg="#ffffff").pack(pady=5)
+        self.loan_amount_entry = tk.Entry(loan_frame, font=("Arial", 12), width=30)
+        self.loan_amount_entry.pack(pady=5)
+
+        tk.Label(loan_frame, text="Interest Rate (%):", font=("Arial", 12), bg="#ffffff").pack(pady=5)
+        self.loan_interest_entry = tk.Entry(loan_frame, font=("Arial", 12), width=30)
+        self.loan_interest_entry.pack(pady=5)
+
+        tk.Label(loan_frame, text="Term (Months):", font=("Arial", 12), bg="#ffffff").pack(pady=5)
+        self.loan_term_entry = tk.Entry(loan_frame, font=("Arial", 12), width=30)
+        self.loan_term_entry.pack(pady=5)
+
+        tk.Button(loan_frame, text="Apply for Loan", command=self.apply_for_loan, font=("Arial", 12), width=15, bg="#ff5722", fg="#ffffff").pack(pady=5)
+        tk.Button(loan_frame, text="Back", command=self.show_main_menu, font=("Arial", 12), width=15, bg="#f44336", fg="#ffffff").pack(pady=5)
+
+    def apply_for_loan(self):
+        try:
+            amount = float(self.loan_amount_entry.get())
+            interest_rate = float(self.loan_interest_entry.get())
+            term_months = int(self.loan_term_entry.get())
+            self.current_account.apply_for_loan(amount, interest_rate, term_months)
+            messagebox.showinfo("Success", f"Loan of ${amount} applied successfully at {interest_rate}% interest for {term_months} months.")
+            self.show_main_menu()
+        except ValueError as e:
+            messagebox.showerror("Error", str(e))
+
+    def change_password(self):
+        new_password = self.current_account.change_password()
+        # Save the updated password to the file
+        self.bank.save_account_to_file(
+            self.current_account.account_id,
+            self.current_account.name,
+            self.current_account.dob,
+            self.current_account.address,
+            self.current_account.phone,
+            self.current_account.email,
+            self.current_account.gov_id,
+            new_password,
+            self.current_account.balance
+        )
+        messagebox.showinfo("Password Changed", f"Your new password is: {new_password}")
+
+
+    def generate_one_time_card(self):
+        card_number, expiry_date, cvv = self.current_account.generate_one_time_card()
+        messagebox.showinfo("One-Time Card Generated", f"Card Number: {card_number}\nExpiry Date: {expiry_date}\nCVV: {cvv}")
 
     def logout(self):
         self.current_account = None

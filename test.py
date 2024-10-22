@@ -2,8 +2,6 @@ import tkinter as tk
 from tkinter import messagebox
 import csv
 import os
-import random
-import string
 from PIL import Image, ImageTk
 
 class Account:
@@ -29,7 +27,7 @@ class Bank:
                 except StopIteration:
                     return
                 for row in reader:
-                    account_id, name, dob, address, phone, email, gov_id, password, balance, initial_balance = row
+                    account_id, name , DOB , Address, Phone, Email, gov_id, Password, balance, initial_balance = row
                     self.accounts[account_id] = Account(account_id, name, float(balance))
 
     def create_account(self, account_id, name, dob, address, phone, email, gov_id, password, initial_balance=0, balance=0):
@@ -48,10 +46,18 @@ class Bank:
 
     def save_account_to_file(self, account_id, name, dob, address, phone, email, gov_id, password, balance, initial_balance=0):
         file_exists = os.path.isfile(self.accounts_file)
+        # Add title row if file does not exist or is empty
         with open(self.accounts_file, 'a', newline='') as file:
             writer = csv.writer(file)
             if not file_exists or os.stat(self.accounts_file).st_size == 0:
                 writer.writerow(["Account ID", "Name", "DOB", "Address", "Phone", "Email", "Gov ID", "Password", "Balance", "Initial Balance"])
+        file_exists = os.path.isfile(self.accounts_file)
+        with open(self.accounts_file, 'a', newline='') as file:
+            writer = csv.writer(file)
+            if not file_exists:
+                writer.writerow(["Account ID", "Name", "DOB", "Address", "Phone", "Email", "Gov ID", "Password", "Balance", "Initial Balance"])
+        with open(self.accounts_file, 'a', newline='') as file:
+            writer = csv.writer(file)
             writer.writerow([account_id, name, dob, address, phone, email, gov_id, password, balance, initial_balance])
 
     def save_all_accounts_to_file(self):
@@ -59,7 +65,7 @@ class Bank:
             writer = csv.writer(file)
             writer.writerow(["Account ID", "Name", "DOB", "Address", "Phone", "Email", "Gov ID", "Password", "Balance", "Initial Balance"])  # Write header row
             for account in self.accounts.values():
-                writer.writerow([account.account_id, account.name, "", "", "", "", "", "", account.balance])
+                writer.writerow([account.account_id, account.name, account.balance])
 
     def load_account_requests(self):
         requests = []
@@ -175,22 +181,9 @@ class AdminApp:
         tk.Button(supervisor_accounts_frame, text="Back", command=self.show_admin_menu, font=("Arial", 12), width=20, bg="#f44336", fg="#ffffff").pack(pady=10)
 
     def reset_account(self, account):
-        old_account_id = account.account_id
-        new_account_id = ''.join(random.choices(string.ascii_uppercase + string.digits, k=8))
-        new_password = ''.join(random.choices(string.ascii_letters + string.digits, k=10))
-        with open(self.bank.accounts_file, 'r') as file:
-            rows = list(csv.reader(file))
-        with open(self.bank.accounts_file, 'w', newline='') as file:
-            writer = csv.writer(file)
-            for row in rows:
-                if row[0] == old_account_id:
-                    row[0] = new_account_id
-                    row[7] = new_password
-                writer.writerow(row)
-        account.account_id = new_account_id
-        self.bank.accounts[new_account_id] = account
-        del self.bank.accounts[old_account_id]
-        messagebox.showinfo("Success", f"Account reset successful! New Account ID: {new_account_id}, New Password: {new_password}")
+        account.balance = 0
+        self.bank.save_all_accounts_to_file()
+        messagebox.showinfo("Success", f"Account {account.account_id} has been reset.")
         self.show_supervisor_accounts_screen()
 
     def show_create_account_screen(self):
@@ -220,7 +213,7 @@ class AdminApp:
         name = self.new_account_name_entry.get()
         try:
             initial_balance = float(self.new_account_balance_entry.get())
-            self.bank.create_account(account_id, name, "", "", "", "", "", "", initial_balance)
+            self.bank.create_account(account_id, name, initial_balance)
             messagebox.showinfo("Success", "Account created successfully!")
             self.show_admin_menu()
         except ValueError as e:
