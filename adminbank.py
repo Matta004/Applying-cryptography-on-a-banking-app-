@@ -1,11 +1,18 @@
-import tkinter as tk
-from tkinter import messagebox
-import csv
 import os
+import csv
 import random
 import string
+import smtplib
+import threading
+import tkinter as tk
+from tkinter import messagebox
 from PIL import Image, ImageTk
+from email.message import EmailMessage
 
+
+# Google account credentials
+SENDER_EMAIL = "kambucharestaurant@gmail.com"
+SENDER_APP_PASSWORD = "nguo xchl yxep dfma"
 class Account:
     def __init__(self, account_id, name, initial_balance=0):
         self.account_id = account_id
@@ -82,6 +89,47 @@ class Bank:
             for request in requests:
                 if request[0] != account_id:
                     writer.writerow(request)
+
+    def send_approval_email(self, email, account_id, password):
+        msg = EmailMessage()
+        msg.set_content(f"Dear User,\n\nYour account has been approved.\n\nAccount ID: {account_id}\nPassword: {password}\n\nPlease keep this information secure.")
+        msg['Subject'] = "Your Account has been Approved"
+        msg['From'] = SENDER_EMAIL
+        msg['To'] = email
+
+        print("Attempting to send email...")  # Debug statement
+
+        try:
+            with smtplib.SMTP_SSL('smtp.gmail.com', 465) as smtp:
+                print("Connecting to SMTP server...")  # Debug statement
+                smtp.login(SENDER_EMAIL, SENDER_APP_PASSWORD)
+                print("Login successful!")  # Debug statement
+                smtp.send_message(msg)
+            print(f"Email successfully sent to {email} with Account ID: {account_id}")
+        except smtplib.SMTPException as e:
+            print(f"SMTP error occurred: {e}")
+        except Exception as e:
+            print(f"An error occurred: {e}")
+
+    def accept_request(self, request):
+        account_id, name, dob, address, phone, email, gov_id, password = request
+        print("Accept request started.")  # Debug statement
+        try:
+            self.create_account(account_id, name, dob, address, phone, email, gov_id, password, balance=0)
+            print("Account created.")  # Debug statement
+            self.delete_account_request(account_id)
+            print("Account request deleted.")  # Debug statement
+            
+            # Call email function in a separate thread
+            email_thread = threading.Thread(target=self.send_approval_email, args=(email, account_id, password))
+            email_thread.start()
+            print("send_approval_email called in thread.")  # Debug statement
+            
+            messagebox.showinfo("Success", f"Account {account_id} created and email sent successfully!")
+        except ValueError as e:
+            print(f"Error in accept_request: {e}")
+            messagebox.showerror("Error", str(e))
+
 
 class AdminApp:
     def __init__(self, root, bank):
