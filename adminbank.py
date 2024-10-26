@@ -11,8 +11,8 @@ from email.message import EmailMessage
 
 
 # Google account credentials
-SENDER_EMAIL = "kambucharestaurant@gmail.com"
-SENDER_APP_PASSWORD = "nguo xchl yxep dfma"
+SENDER_EMAIL = ""
+SENDER_APP_PASSWORD = ""
 class Account:
     def __init__(self, account_id, name, initial_balance=0):
         self.account_id = account_id
