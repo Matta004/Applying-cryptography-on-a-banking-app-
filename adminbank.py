@@ -10,8 +10,8 @@ from PIL import Image, ImageTk
 from email.message import EmailMessage
 
 # Google account credentials
-SENDER_EMAIL = "kambucharestaurant@gmail.com"
-SENDER_APP_PASSWORD = "nguo xchl yxep dfma"
+SENDER_EMAIL = "@gmail.com"
+SENDER_APP_PASSWORD = " "
 
 class Account:
     def __init__(self, account_id, name, dob, address, phone, email, gov_id, password, balance=0, initial_balance=0, two_factor_enabled=False, two_factor_secret=''):
