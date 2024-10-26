@@ -4,10 +4,12 @@ import csv
 import os
 import random
 import string
+import pyotp
+import qrcode
 from PIL import Image, ImageTk
 
 class Account:
-    def __init__(self, account_id, name, dob, address, phone, email, gov_id, password, balance=0, initial_balance=0):
+    def __init__(self, account_id, name, dob, address, phone, email, gov_id, password, balance=0, initial_balance=0, two_factor_enabled=False, two_factor_secret=None):
         self.account_id = account_id
         self.name = name
         self.dob = dob
@@ -20,6 +22,8 @@ class Account:
         self.initial_balance = initial_balance
         self.transaction_history = []
         self.loans = []
+        self.two_factor_enabled = two_factor_enabled
+        self.two_factor_secret = two_factor_secret
 
     def deposit(self, amount):
         if amount > 0:
@@ -88,9 +92,20 @@ class Bank:
         if os.path.exists(self.accounts_file):
             with open(self.accounts_file, 'r') as file:
                 reader = csv.reader(file)
-                next(reader, None)  # Skip header
+                header = next(reader, None)  # Get header
                 for row in reader:
-                    account_id, name, dob, address, phone, email, gov_id, password, balance, initial_balance = row
+                    if len(row) == 12:
+                        (account_id, name, dob, address, phone, email, gov_id, password,
+                         balance, initial_balance, two_factor_enabled, two_factor_secret) = row
+                    elif len(row) == 11:
+                        (account_id, name, dob, address, phone, email, gov_id, password,
+                         balance, initial_balance, two_factor_enabled) = row
+                        two_factor_secret = ''
+                    else:
+                        # Handle error or skip the row
+                        print(f"Skipping row with unexpected number of columns: {len(row)}")
+                        continue
+
                     self.accounts[account_id] = Account(
                         account_id=account_id,
                         name=name,
@@ -101,7 +116,9 @@ class Bank:
                         gov_id=gov_id,
                         password=password,
                         balance=float(balance),
-                        initial_balance=float(initial_balance)
+                        initial_balance=float(initial_balance),
+                        two_factor_enabled=(two_factor_enabled.lower() == 'true'),
+                        two_factor_secret=two_factor_secret or None
                     )
 
     def create_account_request(self, name, dob, address, phone, email, id_number):
@@ -118,25 +135,47 @@ class Bank:
     def create_account(self, account_id, name, dob, address, phone, email, id_number, password, initial_balance=0):
         if account_id not in self.accounts:
             self.accounts[account_id] = Account(account_id, name, dob, address, phone, email, id_number, password, initial_balance)
-            self.save_account_to_file(account_id, name, dob, address, phone, email, id_number, password, initial_balance)
+            self.save_accounts_to_file()
         else:
             raise ValueError("Account ID already exists. Please choose a different ID.")
 
-    def save_account_to_file(self, account_id, name, dob, address, phone, email, gov_id, password, balance):
-        file_exists = os.path.isfile(self.accounts_file)
-        with open(self.accounts_file, 'a', newline='') as file:
+    def save_accounts_to_file(self):
+        with open(self.accounts_file, 'w', newline='') as file:
             writer = csv.writer(file)
-            if not file_exists:
-                writer.writerow(['Account ID', 'Name', 'DOB', 'Address', 'Phone', 'Email', 'Gov ID', 'Password', 'Balance', 'Initial Balance'])
-            writer.writerow([account_id, name, dob, address, phone, email, gov_id, password, balance, balance])
+            writer.writerow(['Account ID', 'Name', 'DOB', 'Address', 'Phone', 'Email', 'Gov ID', 'Password', 'Balance', 'Initial Balance', 'Two Factor Enabled', 'Two Factor Secret'])
+            for account in self.accounts.values():
+                writer.writerow([
+                    account.account_id,
+                    account.name,
+                    account.dob,
+                    account.address,
+                    account.phone,
+                    account.email,
+                    account.gov_id,
+                    account.password,
+                    account.balance,
+                    account.initial_balance,
+                    'True' if account.two_factor_enabled else 'False',
+                    account.two_factor_secret or ''
+                ])
 
     def get_account(self, account_id):
         return self.accounts.get(account_id)
 
-    def login(self, account_id, password):
+    def login(self, account_id, password, two_factor_code=None):
         account = self.get_account(account_id)
         if account and account.password == password:
-            return account
+            if account.two_factor_enabled:
+                if not two_factor_code:
+                    return '2fa_required'
+                else:
+                    totp = pyotp.TOTP(account.two_factor_secret)
+                    if totp.verify(two_factor_code):
+                        return account
+                    else:
+                        return 'invalid_2fa'
+            else:
+                return '2fa_setup_required'
         else:
             return None
 
@@ -198,12 +237,87 @@ class BankApp:
     def login(self):
         account_id = self.account_id_entry.get()
         password = self.password_entry.get()
-        account = self.bank.login(account_id, password)
-        if account:
-            self.current_account = account
+        account_or_status = self.bank.login(account_id, password)
+        if account_or_status == '2fa_required':
+            self.account_id = account_id
+            self.password = password
+            self.show_two_factor_prompt()
+        elif account_or_status == '2fa_setup_required':
+            self.current_account = self.bank.get_account(account_id)
+            self.show_two_factor_setup()
+        elif account_or_status == 'invalid_2fa':
+            messagebox.showerror("Error", "Invalid Two-Factor Authentication code")
+        elif account_or_status:
+            self.current_account = account_or_status
             self.show_main_menu()
         else:
             messagebox.showerror("Error", "Invalid Account ID or Password")
+
+    def show_two_factor_prompt(self):
+        self.clear_screen()
+        two_factor_frame = tk.Frame(self.root, bg="#ffffff", padx=20, pady=20, relief="groove", bd=3)
+        two_factor_frame.place(relx=0.5, rely=0.3, anchor="n")
+
+        tk.Label(two_factor_frame, text="Enter Two-Factor Authentication Code:", font=("Arial", 12), bg="#ffffff").pack(pady=5)
+        self.two_factor_code_entry = tk.Entry(two_factor_frame, font=("Arial", 12), width=30)
+        self.two_factor_code_entry.pack(pady=5)
+
+        tk.Button(two_factor_frame, text="Verify", command=self.verify_two_factor_code, font=("Arial", 12), width=15, bg="#4caf50", fg="#ffffff").pack(pady=5)
+        tk.Button(two_factor_frame, text="Back", command=self.show_login_screen, font=("Arial", 12), width=15, bg="#f44336", fg="#ffffff").pack(pady=5)
+
+    def verify_two_factor_code(self):
+        two_factor_code = self.two_factor_code_entry.get()
+        account_or_status = self.bank.login(self.account_id, self.password, two_factor_code)
+        if account_or_status == 'invalid_2fa':
+            messagebox.showerror("Error", "Invalid Two-Factor Authentication code")
+        elif account_or_status:
+            self.current_account = account_or_status
+            self.show_main_menu()
+        else:
+            messagebox.showerror("Error", "Invalid Account ID or Password")
+
+    def show_two_factor_setup(self):
+        self.clear_screen()
+        setup_frame = tk.Frame(self.root, bg="#ffffff", padx=20, pady=20, relief="groove", bd=3)
+        setup_frame.place(relx=0.5, rely=0.2, anchor="n")
+
+        tk.Label(setup_frame, text="Two-Factor Authentication Setup", font=("Arial", 16), bg="#ffffff").pack(pady=10)
+
+        # Generate a secret key
+        secret = pyotp.random_base32()
+        self.current_account.two_factor_secret = secret
+
+        # Generate the provisioning URI
+        totp = pyotp.TOTP(secret)
+        provisioning_uri = totp.provisioning_uri(name=self.current_account.email, issuer_name="MyBankApp")
+
+        # Generate QR code
+        qr_img = qrcode.make(provisioning_uri)
+        qr_img = qr_img.resize((200, 200), Image.LANCZOS)
+        qr_photo = ImageTk.PhotoImage(qr_img)
+        qr_label = tk.Label(setup_frame, image=qr_photo)
+        qr_label.image = qr_photo  # Keep a reference
+        qr_label.pack(pady=5)
+
+        tk.Label(setup_frame, text="Scan this QR code with your Microsoft Authenticator app.", font=("Arial", 12), bg="#ffffff").pack(pady=5)
+        tk.Label(setup_frame, text="Then enter the code generated by the app below:", font=("Arial", 12), bg="#ffffff").pack(pady=5)
+
+        self.two_factor_code_entry = tk.Entry(setup_frame, font=("Arial", 12), width=30)
+        self.two_factor_code_entry.pack(pady=5)
+
+        tk.Button(setup_frame, text="Verify", command=self.verify_two_factor_setup_code, font=("Arial", 12), width=15, bg="#4caf50", fg="#ffffff").pack(pady=5)
+        tk.Button(setup_frame, text="Back", command=self.show_login_screen, font=("Arial", 12), width=15, bg="#f44336", fg="#ffffff").pack(pady=5)
+
+    def verify_two_factor_setup_code(self):
+        two_factor_code = self.two_factor_code_entry.get()
+        totp = pyotp.TOTP(self.current_account.two_factor_secret)
+        if totp.verify(two_factor_code):
+            self.current_account.two_factor_enabled = True
+            self.bank.save_accounts_to_file()
+            messagebox.showinfo("Success", "Two-Factor Authentication setup complete.")
+            self.show_main_menu()
+        else:
+            messagebox.showerror("Error", "Invalid code. Please try again.")
 
     def show_request_account_screen(self):
         self.clear_screen()
@@ -294,11 +408,7 @@ class BankApp:
             if amount <= 0:
                 raise ValueError("Deposit amount must be greater than zero.")
             self.current_account.deposit(amount)
-            self.bank.save_account_to_file(
-                self.current_account.account_id, self.current_account.name, self.current_account.dob, 
-                self.current_account.address, self.current_account.phone, self.current_account.email, 
-                self.current_account.gov_id, self.current_account.password, self.current_account.balance
-            )
+            self.bank.save_accounts_to_file()
             messagebox.showinfo("Success", f"Deposited ${amount} successfully.")
             self.show_main_menu()
         except ValueError as e:
@@ -321,11 +431,7 @@ class BankApp:
         try:
             amount = float(self.withdraw_amount_entry.get())
             self.current_account.withdraw(amount)
-            self.bank.save_account_to_file(
-                self.current_account.account_id, self.current_account.name, self.current_account.dob, 
-                self.current_account.address, self.current_account.phone, self.current_account.email, 
-                self.current_account.gov_id, self.current_account.password, self.current_account.balance
-            )
+            self.bank.save_accounts_to_file()
             messagebox.showinfo("Success", f"Withdrew ${amount} successfully.")
             self.show_main_menu()
         except ValueError as e:
@@ -356,16 +462,7 @@ class BankApp:
             if not receiver_account:
                 raise ValueError("Receiver account not found.")
             self.current_account.transfer(receiver_account, amount)
-            self.bank.save_account_to_file(
-                self.current_account.account_id, self.current_account.name, self.current_account.dob, 
-                self.current_account.address, self.current_account.phone, self.current_account.email, 
-                self.current_account.gov_id, self.current_account.password, self.current_account.balance
-            )
-            self.bank.save_account_to_file(
-                receiver_account.account_id, receiver_account.name, receiver_account.dob, 
-                receiver_account.address, receiver_account.phone, receiver_account.email, 
-                receiver_account.gov_id, receiver_account.password, receiver_account.balance
-            )
+            self.bank.save_accounts_to_file()
             messagebox.showinfo("Success", f"Transferred ${amount} to account {receiver_id} successfully.")
             self.show_main_menu()
         except ValueError as e:
@@ -405,20 +502,8 @@ class BankApp:
 
     def change_password(self):
         new_password = self.current_account.change_password()
-        # Save the updated password to the file
-        self.bank.save_account_to_file(
-            self.current_account.account_id,
-            self.current_account.name,
-            self.current_account.dob,
-            self.current_account.address,
-            self.current_account.phone,
-            self.current_account.email,
-            self.current_account.gov_id,
-            new_password,
-            self.current_account.balance
-        )
+        self.bank.save_accounts_to_file()
         messagebox.showinfo("Password Changed", f"Your new password is: {new_password}")
-
 
     def generate_one_time_card(self):
         card_number, expiry_date, cvv = self.current_account.generate_one_time_card()
