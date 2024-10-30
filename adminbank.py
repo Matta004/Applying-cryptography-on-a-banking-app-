@@ -1,17 +1,20 @@
+import io
 import os
 import csv
 import random
 import string
 import smtplib
+import requests
 import threading
 import tkinter as tk
-from tkinter import messagebox, simpledialog
 from PIL import Image, ImageTk
 from email.message import EmailMessage
+from tkinter import messagebox, simpledialog
+
 
 # Google account credentials
-SENDER_EMAIL = "@gmail.com"
-SENDER_APP_PASSWORD = " "
+SENDER_EMAIL = "kambucharestaurant@gmail.com"
+SENDER_APP_PASSWORD = "nguo xchl yxep dfma"
 
 class Account:
     def __init__(self, account_id, name, dob, address, phone, email, gov_id, password, balance=0, initial_balance=0, two_factor_enabled=False, two_factor_secret=''):
@@ -29,101 +32,134 @@ class Account:
         self.two_factor_secret = two_factor_secret
 
 class Bank:
-    def __init__(self, accounts_file='accounts.csv', transactions_file='transactions.csv', requests_file='account_requests.csv', denied_users_file='denied_users.csv'):
+    def __init__(self, server_url='http://mattahome.tplinkdns.com:5000'):
         self.accounts = {}
-        self.accounts_file = accounts_file
-        self.transactions_file = transactions_file
-        self.requests_file = requests_file
-        self.denied_users_file = denied_users_file
+        self.server_url = server_url
         self.load_accounts()
 
     def load_accounts(self):
-        if os.path.exists(self.accounts_file):
-            with open(self.accounts_file, 'r', newline='') as file:
-                reader = csv.reader(file)
-                try:
-                    header = next(reader)  # Skip the header row
-                except StopIteration:
-                    return
-                for row in reader:
-                    if len(row) >= 12:
-                        (account_id, name, dob, address, phone, email, gov_id, password,
-                         balance, initial_balance, two_factor_enabled, two_factor_secret) = row[:12]
-                    else:
-                        # Handle rows with missing columns
-                        print(f"Skipping row with insufficient columns: {row}")
-                        continue
-                    # Convert balance and initial_balance to float
-                    balance = float(balance)
-                    initial_balance = float(initial_balance)
-                    # Convert two_factor_enabled to boolean
-                    two_factor_enabled = two_factor_enabled.lower() == 'true'
-                    # Create the Account object
-                    self.accounts[account_id] = Account(account_id, name, dob, address, phone, email, gov_id, password, balance, initial_balance, two_factor_enabled, two_factor_secret)
+        # Fetch accounts data from the server endpoint
+        response = requests.get(f"{self.server_url}/view_accounts")
+        if response.status_code == 200:
+            csv_content = response.json()["accounts"]
+            
+            # Skip header row if present
+            header = csv_content[0]
+            if header[0] == "Account ID":
+                csv_content = csv_content[1:]  # Exclude the header
+
+            for row in csv_content:
+                if len(row) >= 12:
+                    account_id, name, dob, address, phone, email, gov_id, password, balance, initial_balance, two_factor_enabled, two_factor_secret = row[:12]
+                elif len(row) >= 11:
+                    account_id, name, dob, address, phone, email, gov_id, password, balance, initial_balance, two_factor_enabled = row[:11]
+                    two_factor_secret = ''
+
+                self.accounts[account_id] = Account(
+                    account_id=account_id,
+                    name=name,
+                    dob=dob,
+                    address=address,
+                    phone=phone,
+                    email=email,
+                    gov_id=gov_id,
+                    password=password,
+                    balance=float(balance),
+                    initial_balance=float(initial_balance),
+                    two_factor_enabled=(two_factor_enabled.lower() == 'true'),
+                    two_factor_secret=two_factor_secret or None
+                )
+            print("Accounts loaded successfully from server.")
+        else:
+            print(f"Failed to load accounts data: {response.text}")
+
+    def save_accounts_to_server(self):
+        # Convert accounts data to CSV format
+        output = io.StringIO()
+        writer = csv.writer(output)
+        writer.writerow(["Account ID", "Name", "DOB", "Address", "Phone", "Email", "Gov ID", "Password", "Balance", "Initial Balance", "Two Factor Enabled", "Two Factor Secret"])
+        for account in self.accounts.values():
+            writer.writerow([
+                account.account_id,
+                account.name,
+                account.dob,
+                account.address,
+                account.phone,
+                account.email,
+                account.gov_id,
+                account.password,
+                account.balance,
+                account.initial_balance,
+                'true' if account.two_factor_enabled else 'false',
+                account.two_factor_secret
+            ])
+        csv_data = output.getvalue()
+        # Send the CSV data to the server
+        response = requests.post(f"{self.server_url}/save_accounts", data=csv_data)
+        if response.status_code == 200:
+            print("Accounts data saved successfully to server.")
+        else:
+            print(f"Failed to save accounts data: {response.text}")
 
     def create_account(self, account_id, name, dob, address, phone, email, gov_id, password, initial_balance=0, balance=0, two_factor_enabled=False, two_factor_secret=''):
         if account_id not in self.accounts:
             self.accounts[account_id] = Account(account_id, name, dob, address, phone, email, gov_id, password, balance, initial_balance, two_factor_enabled, two_factor_secret)
-            self.save_accounts_to_file()
+            self.save_accounts_to_server()
         else:
             raise ValueError("Account ID already exists. Please choose a different ID.")
 
     def remove_account(self, account_id):
         if account_id in self.accounts:
             del self.accounts[account_id]
-            self.save_accounts_to_file()
+            self.save_accounts_to_server()
         else:
             raise ValueError("Account ID does not exist.")
 
-    def save_accounts_to_file(self):
-        with open(self.accounts_file, 'w', newline='') as file:
-            writer = csv.writer(file)
-            writer.writerow(["Account ID", "Name", "DOB", "Address", "Phone", "Email", "Gov ID", "Password", "Balance", "Initial Balance", "Two Factor Enabled", "Two Factor Secret"])
-            for account in self.accounts.values():
-                writer.writerow([
-                    account.account_id,
-                    account.name,
-                    account.dob,
-                    account.address,
-                    account.phone,
-                    account.email,
-                    account.gov_id,
-                    account.password,
-                    account.balance,
-                    account.initial_balance,
-                    'true' if account.two_factor_enabled else 'false',
-                    account.two_factor_secret
-                ])
-
     def load_account_requests(self):
-        requests = []
-        if os.path.exists(self.requests_file):
-            with open(self.requests_file, 'r', newline='') as file:
-                reader = csv.reader(file)
-                try:
-                    next(reader)  # Skip the header row
-                except StopIteration:
-                    return []
-                for row in reader:
-                    requests.append(row)
-        return requests
+        # Fetch account requests data directly from the server
+        response = requests.get(f"{self.server_url}/account_requests.csv")
+        requests_list = []
+        if response.status_code == 200:
+            csv_content = response.text
+            csv_file = io.StringIO(csv_content)
+            reader = csv.reader(csv_file)
+            try:
+                next(reader)  # Skip the header row
+            except StopIteration:
+                return []
+            for row in reader:
+                requests_list.append(row)
+            print("Account requests loaded successfully from server.")
+        else:
+            print(f"Failed to load account requests data: {response.text}")
+        return requests_list
 
     def delete_account_request(self, account_id):
-        requests = self.load_account_requests()
-        with open(self.requests_file, 'w', newline='') as file:
-            writer = csv.writer(file)
-            writer.writerow(["Account ID", "Name", "DOB", "Address", "Phone", "Email", "Gov ID", "Password"])  # Write header row
-            for request in requests:
-                if request[0] != account_id:
-                    writer.writerow(request)
+        # Send a request to the server to delete the account request
+        response = requests.post(f"{self.server_url}/delete_account_request", json={'account_id': account_id})
+        if response.status_code == 200:
+            print(f"Account request {account_id} deleted successfully from server.")
+        else:
+            print(f"Failed to delete account request: {response.text}")
 
     def save_denied_user(self, user_info, reason):
-        file_exists = os.path.isfile(self.denied_users_file)
-        with open(self.denied_users_file, 'a', newline='') as file:
-            writer = csv.writer(file)
-            if not file_exists:
-                writer.writerow(["Account ID", "Name", "DOB", "Address", "Phone", "Email", "Gov ID", "Password", "Reason"])
-            writer.writerow(user_info + [reason])
+        # Send denied user info to the server
+        denied_user_data = {
+            'Account ID': user_info[0],
+            'Name': user_info[1],
+            'DOB': user_info[2],
+            'Address': user_info[3],
+            'Phone': user_info[4],
+            'Email': user_info[5],
+            'Gov ID': user_info[6],
+            'Password': user_info[7],
+            'Reason': reason
+        }
+        response = requests.post(f"{self.server_url}/save_denied_user", json=denied_user_data)
+        if response.status_code == 200:
+            print(f"Denied user {user_info[0]} saved successfully to server.")
+        else:
+            print(f"Failed to save denied user: {response.text}")
 
     def send_denial_email(self, email, name, reason):
         msg = EmailMessage()
@@ -389,7 +425,7 @@ class AdminApp:
         try:
             account.balance = float(self.edit_account_balance_entry.get())
             # Update other fields if necessary
-            self.bank.save_accounts_to_file()
+            self.bank.save_accounts_to_server()
             messagebox.showinfo("Success", "Account updated successfully!")
             self.show_current_accounts_screen()
         except ValueError as e:
@@ -455,8 +491,8 @@ class AdminApp:
         self.bank.accounts[new_account_id] = account
         del self.bank.accounts[old_account_id]
 
-        # Save changes to the accounts file
-        self.bank.save_accounts_to_file()
+        # Save changes to the server
+        self.bank.save_accounts_to_server()
 
         messagebox.showinfo("Success", f"Account reset successful!\nNew Account ID: {new_account_id}\nNew Password: {new_password}")
         self.show_supervisor_accounts_screen()
